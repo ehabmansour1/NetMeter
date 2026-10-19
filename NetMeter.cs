@@ -32,6 +32,7 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        Settings.Load();
         if (args.Length == 2 && args[0] == "--dump")
         {
             System.IO.File.WriteAllText(args[1], Usage.Query().ToText());
@@ -43,6 +44,24 @@ static class Program
                 bmp.Save(args[1]);
             return;
         }
+        if (args.Length == 2 && args[0] == "--settings")
+        {
+            SetProcessDPIAware();
+            Application.EnableVisualStyles();
+            // Shows the real window for a moment and captures it from the screen.
+            using (var f = new SettingsForm { ShowInTaskbar = false })
+            {
+                f.Show();
+                for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
+                var r = f.Bounds;
+                using (var bmp = new Bitmap(r.Width, r.Height))
+                {
+                    using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(r.Location, Point.Empty, r.Size);
+                    bmp.Save(args[1]);
+                }
+            }
+            return;
+        }
         bool created;
         var mutex = new System.Threading.Mutex(true, "NetMeter_SingleInstance", out created);
         if (!created) return;
@@ -51,6 +70,95 @@ static class Program
         Application.EnableVisualStyles();
         Application.Run(new Meter());
         GC.KeepAlive(mutex);
+    }
+}
+
+// ---------- settings (HKCU\Software\NetMeter) ----------
+
+static class Settings
+{
+    const string Key = @"Software\NetMeter";
+
+    public static int UpdateMs = 1000;          // 500 / 1000 / 2000
+    public static bool Bits;                    // Mbps instead of MB/s
+    public static int TextPx = 12;              // 11 / 12 / 13 / 14
+    public static bool ArrowsRight = true;
+    public static int UpColor, DownColor;       // ARGB; 0 = theme default
+    public static bool TinyAsZero;              // under 1 KB/s shows as 0
+    public static bool ShowTopApps = true;
+    public static int TopAppsCount = 5;         // 3 / 5 / 10
+    public static int HoverDelayMs = 400;       // 0 / 400 / 1000
+    public static bool DecimalUnits;            // 1 GB = 1000^3 (ISP style) instead of 1024^3
+    public static int MonthStartDay = 1;        // 1..28 (billing day)
+
+    public static event Action Changed;
+
+    public static void Load()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key))
+            {
+                if (k == null) return;
+                UpdateMs = Get(k, "UpdateMs", UpdateMs);
+                Bits = Get(k, "Bits", 0) == 1;
+                TextPx = Get(k, "TextPx", TextPx);
+                ArrowsRight = Get(k, "ArrowsRight", 1) == 1;
+                UpColor = Get(k, "UpColor", 0);
+                DownColor = Get(k, "DownColor", 0);
+                TinyAsZero = Get(k, "TinyAsZero", 0) == 1;
+                ShowTopApps = Get(k, "ShowTopApps", 1) == 1;
+                TopAppsCount = Get(k, "TopAppsCount", TopAppsCount);
+                HoverDelayMs = Get(k, "HoverDelayMs", HoverDelayMs);
+                DecimalUnits = Get(k, "DecimalUnits", 0) == 1;
+                MonthStartDay = Math.Max(1, Math.Min(28, Get(k, "MonthStartDay", 1)));
+            }
+        }
+        catch { }
+    }
+
+    public static void Save()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Key))
+            {
+                k.SetValue("UpdateMs", UpdateMs);
+                k.SetValue("Bits", Bits ? 1 : 0);
+                k.SetValue("TextPx", TextPx);
+                k.SetValue("ArrowsRight", ArrowsRight ? 1 : 0);
+                k.SetValue("UpColor", UpColor);
+                k.SetValue("DownColor", DownColor);
+                k.SetValue("TinyAsZero", TinyAsZero ? 1 : 0);
+                k.SetValue("ShowTopApps", ShowTopApps ? 1 : 0);
+                k.SetValue("TopAppsCount", TopAppsCount);
+                k.SetValue("HoverDelayMs", HoverDelayMs);
+                k.SetValue("DecimalUnits", DecimalUnits ? 1 : 0);
+                k.SetValue("MonthStartDay", MonthStartDay);
+            }
+        }
+        catch { }
+        if (Changed != null) Changed();
+    }
+
+    public static void ResetDefaults()
+    {
+        UpdateMs = 1000; Bits = false; TextPx = 12; ArrowsRight = true; UpColor = 0; DownColor = 0;
+        TinyAsZero = false; ShowTopApps = true; TopAppsCount = 5; HoverDelayMs = 400; DecimalUnits = false; MonthStartDay = 1;
+        Save();
+    }
+
+    // First day of the current (billing) month.
+    public static DateTime MonthStart()
+    {
+        var t = DateTime.Today;
+        var start = new DateTime(t.Year, t.Month, MonthStartDay);
+        return t >= start ? start : start.AddMonths(-1);
+    }
+
+    static int Get(Microsoft.Win32.RegistryKey k, string name, int def)
+    {
+        try { return Convert.ToInt32(k.GetValue(name, def)); } catch { return def; }
     }
 }
 
@@ -152,7 +260,7 @@ class Usage
     {
         var now = DateTimeOffset.Now;
         var today = new DateTimeOffset(DateTime.Today);
-        var monthStart = new DateTimeOffset(new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1));
+        var monthStart = new DateTimeOffset(Settings.MonthStart());
         var states = new NetworkUsageStates { Roaming = TriStates.DoNotCare, Shared = TriStates.DoNotCare };
         var r = new Usage();
         var profiles = NetworkInformation.GetConnectionProfiles();
@@ -161,8 +269,11 @@ class Usage
             foreach (var u in Read(p, today, now, states)) { r.TodayDown += u.BytesReceived; r.TodayUp += u.BytesSent; }
             foreach (var u in Read(p, monthStart, now, states)) { r.MonthDown += u.BytesReceived; r.MonthUp += u.BytesSent; }
         }
-        try { r.TopApps = TopAppsToday(profiles, today, now, states, 5); }
-        catch { }
+        if (Settings.ShowTopApps)
+        {
+            try { r.TopApps = TopAppsToday(profiles, today, now, states, Settings.TopAppsCount); }
+            catch { }
+        }
         return r;
     }
 
@@ -248,25 +359,35 @@ static class AppNames
 
 static class Fmt
 {
-    const double GB = 1024.0 * 1024 * 1024, MB = 1024.0 * 1024;
+    // 1024 like Windows Settings, or 1000 like most ISPs (Settings.DecimalUnits).
+    static double K { get { return Settings.DecimalUnits ? 1000.0 : 1024.0; } }
 
     public static string Size(ulong bytes)
     {
-        if (bytes < GB) return (bytes / MB).ToString("0") + " MB";
-        double g = bytes / GB;
+        double mb = K * K, gb = mb * K;
+        if (bytes < gb) return (bytes / mb).ToString("0") + " MB";
+        double g = bytes / gb;
         return g.ToString(g < 10 ? "0.00" : g < 100 ? "0.0" : "0") + " GB";
     }
 
-    // style 0: "1.5 KB/s", 1: "1.5K/s", 2: "1.5K" (shorter forms for a narrow meter)
-    public static string Speed(double bps, int style)
+    // style 0: "1.5 KB/s" / "12 Mbps", 1: "1.5K/s" / "12M", 2: "1.5K" / "12M" (shorter forms for a narrow meter)
+    public static string Speed(double bytesPerSec, int style)
     {
+        double v = Settings.Bits ? bytesPerSec * 8 : bytesPerSec, k = K;
         string num, unit;
-        if (bps < 1024) { num = ((int)bps).ToString(); unit = "B"; }
-        else if (bps < MB) { num = (bps / 1024).ToString(bps < 10 * 1024 ? "0.0" : "0"); unit = "K"; }
-        else { num = (bps / MB).ToString(bps < 10 * MB ? "0.0" : "0"); unit = "M"; }
-        if (style == 0) return num + " " + (unit == "B" ? "B" : unit + "B") + "/s";
-        return num + unit + (style == 1 ? "/s" : "");
+        if (Settings.TinyAsZero && v < k) v = 0;
+        if (v < k && !(Settings.TinyAsZero)) { num = ((int)v).ToString(); unit = ""; }
+        else if (v < k * k) { num = (v / k).ToString(v != 0 && v < 10 * k ? "0.0" : "0"); unit = "K"; }
+        else { num = (v / (k * k)).ToString(v < 10 * k * k ? "0.0" : "0"); unit = "M"; }
+
+        if (Settings.Bits)
+            return style == 0 ? num + " " + unit + "bps" : num + unit;
+        if (style == 0) return num + " " + unit + "B/s";
+        return num + (unit == "" ? "B" : unit) + (style == 1 ? "/s" : "");
     }
+
+    // Widest text the meter has to fit at full size.
+    public static string WidestSpeed { get { return Settings.Bits ? "999 Mbps" : "999 KB/s"; } }
 }
 
 // ---------- shared look ----------
@@ -285,14 +406,19 @@ class Theme
                 light = k != null && Convert.ToInt32(k.GetValue("SystemUsesLightTheme", 0)) == 1;
         }
         catch { }
-        return light
+        var t = light
             ? new Theme { Light = true, Text = Color.FromArgb(26, 26, 26), Secondary = Color.FromArgb(96, 96, 96),
                           Up = Color.FromArgb(196, 89, 0), Down = Color.FromArgb(0, 103, 192),
                           CardBack = Color.FromArgb(249, 249, 249), CardBorder = Color.FromArgb(222, 222, 222), Divider = Color.FromArgb(229, 229, 229) }
             : new Theme { Light = false, Text = Color.FromArgb(255, 255, 255), Secondary = Color.FromArgb(170, 170, 170),
                           Up = Color.FromArgb(255, 170, 90), Down = Color.FromArgb(96, 205, 255),
                           CardBack = Color.FromArgb(44, 44, 44), CardBorder = Color.FromArgb(64, 64, 64), Divider = Color.FromArgb(61, 61, 61) };
+        if (Settings.UpColor != 0) t.Up = Color.FromArgb(Settings.UpColor);
+        if (Settings.DownColor != 0) t.Down = Color.FromArgb(Settings.DownColor);
+        return t;
     }
+
+    public static bool SystemLight { get { return Current().Light; } }
 }
 
 static class Gfx
@@ -478,7 +604,10 @@ class UsageCard : LayeredForm
                 float pad = 18 * s, x = pad, right = w - pad;
                 float y = Section(g, t, "TODAY", DateTime.Today.ToString("ddd, MMM d"), u.TodayDown, u.TodayUp, x, right, 16 * s);
                 using (var p = new Pen(t.Divider, 1)) g.DrawLine(p, pad, y, w - pad, y);
-                y = Section(g, t, "THIS MONTH", DateTime.Today.ToString("MMMM yyyy"), u.MonthDown, u.MonthUp, x, right, y + 14 * s);
+                bool billing = Settings.MonthStartDay != 1;
+                y = Section(g, t, billing ? "BILLING MONTH" : "THIS MONTH",
+                    billing ? "Since " + Settings.MonthStart().ToString("MMM d") : DateTime.Today.ToString("MMMM yyyy"),
+                    u.MonthDown, u.MonthUp, x, right, y + 14 * s);
                 if (apps > 0)
                 {
                     using (var p = new Pen(t.Divider, 1)) g.DrawLine(p, pad, y, w - pad, y);
@@ -590,9 +719,11 @@ class Meter : LayeredForm
 {
     readonly Timer tick = new Timer { Interval = 250 };
     readonly float scale;
-    readonly int H, FullWidth, MinWidth;
-    int W;
+    readonly int H, MinWidth;
+    int W, FullWidth;
     readonly UsageCard card;
+    SettingsForm settingsForm;
+    DateTime hoverSince;
 
     long lastRx = -1, lastTx = -1;
     DateTime lastSample = DateTime.MinValue, lastUsage = DateTime.MinValue;
@@ -606,7 +737,7 @@ class Meter : LayeredForm
     public Meter()
     {
         using (var g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96f;
-        FullWidth = W = (int)(76 * scale);
+        FullWidth = W = ComputeFullWidth();
         MinWidth = (int)(40 * scale);
         // Shorter than the taskbar so the taskbar's 1px top edge stays visible above the meter.
         H = (int)(40 * scale);
@@ -615,14 +746,17 @@ class Meter : LayeredForm
         card = new UsageCard(scale);
 
         var menu = new ContextMenuStrip();
+        menu.Items.Add("Settings…", null, delegate { OpenSettings(); });
         menu.Items.Add("Refresh usage", null, delegate { RefreshUsage(); });
         var autoStart = new ToolStripMenuItem("Start with Windows") { CheckOnClick = true, Checked = AutoStart.Enabled };
         autoStart.CheckedChanged += delegate { AutoStart.Set(autoStart.Checked); };
-        menu.Opening += delegate { autoStart.Checked = AutoStart.Enabled; };
         menu.Items.Add(autoStart);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, delegate { Close(); });
+        menu.Opening += delegate { autoStart.Checked = AutoStart.Enabled; };
         ContextMenuStrip = menu;
 
+        Settings.Changed += OnSettingsChanged;
         tick.Tick += delegate { OnTick(); };
         tick.Start();
         RefreshUsage();
@@ -638,14 +772,15 @@ class Meter : LayeredForm
         }
         if (!full) { PlaceNextToTray(); MatchTaskbarColour(); }
 
-        if ((DateTime.Now - lastSample).TotalMilliseconds >= 950) SampleSpeed();
+        if ((DateTime.Now - lastSample).TotalMilliseconds >= Settings.UpdateMs - 50) SampleSpeed();
         if ((DateTime.Now - lastUsage).TotalSeconds >= 30) RefreshUsage();
 
-        // Hover card: appears after ~0.4s over the meter, hides as soon as the mouse leaves.
+        // Hover card: appears after the chosen delay over the meter, hides as soon as the mouse leaves.
         bool over = Visible && Bounds.Contains(Cursor.Position) && !ContextMenuStrip.Visible;
         if (over)
         {
-            if (++hoverTicks == 2)
+            if (hoverTicks++ == 0) hoverSince = DateTime.Now;
+            if (!card.IsOpen && (DateTime.Now - hoverSince).TotalMilliseconds >= Settings.HoverDelayMs)
             {
                 if ((DateTime.Now - lastUsage).TotalSeconds > 5) RefreshUsage();
                 ShowCard();
@@ -661,6 +796,35 @@ class Meter : LayeredForm
     void ShowCard()
     {
         if (usage != null) card.ShowAbove(Bounds, usage, Theme.Current());
+    }
+
+    void OpenSettings()
+    {
+        if (settingsForm == null || settingsForm.IsDisposed) settingsForm = new SettingsForm();
+        settingsForm.Show();
+        settingsForm.Activate();
+    }
+
+    void OnSettingsChanged()
+    {
+        tick.Interval = Math.Min(250, Settings.UpdateMs / 2);
+        FullWidth = ComputeFullWidth();
+        lastUsage = DateTime.MinValue;   // re-query with the new units / month start / app count
+        PlaceNextToTray();
+        Render();
+    }
+
+    // Width needed for the longest speed at full size, plus the arrow column.
+    int ComputeFullWidth()
+    {
+        using (var g = Graphics.FromHwnd(IntPtr.Zero))
+        using (var font = MeterFont())
+            return (int)Math.Ceiling(Gfx.Width(g, Fmt.WidestSpeed, font) + 18 * scale);
+    }
+
+    Font MeterFont()
+    {
+        return Gfx.MakeFont("Segoe UI Variable Text", Settings.TextPx * scale, "Segoe UI");
     }
 
     // ---------- speed ----------
@@ -818,7 +982,7 @@ class Meter : LayeredForm
         using (var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb))
         {
             using (var g = Graphics.FromImage(bmp))
-            using (var font = Gfx.MakeFont("Segoe UI Variable Text", 12 * scale, "Segoe UI"))
+            using (var font = MeterFont())
             {
                 g.Clear(back);
                 // Longest number format that fits the current width: "1.5 KB/s", then "1.5K/s", then "1.5K".
@@ -830,7 +994,7 @@ class Meter : LayeredForm
                     float need = 2 * scale + Math.Max(Gfx.Width(g, up, font), Gfx.Width(g, down, font)) + 5 * scale + 7 * scale + 2 * scale;
                     if (need <= W) break;
                 }
-                float lineH = 17 * scale, top = (H - 2 * lineH) / 2f;
+                float lineH = (Settings.TextPx + 5) * scale, top = (H - 2 * lineH) / 2f;
                 DrawLine(g, true, up, top, font, t);
                 DrawLine(g, false, down, top + lineH, font, t);
             }
@@ -839,13 +1003,23 @@ class Meter : LayeredForm
         }
     }
 
-    // Arrows in a column at the right edge (next to the tray); each number is right-aligned against its arrow.
+    // Numbers are right-aligned next to the tray. Arrows sit in a column at the right edge,
+    // or (setting) just left of each number.
     void DrawLine(Graphics g, bool up, string value, float y, Font font, Theme t)
     {
-        float aw = 7 * scale, ah = 9 * scale, arrowX = W - 2 * scale - aw;
-        float valueW = Gfx.Width(g, value, font);
-        Gfx.Text(g, value, font, t.Text, back, arrowX - 5 * scale - valueW, y);
-        Gfx.Arrow(g, up, arrowX, y + 3 * scale, aw, ah, 1.5f * scale, up ? t.Up : t.Down);
+        float aw = 7 * scale, ah = 9 * scale, gap = 5 * scale, right = W - 2 * scale;
+        float valueW = Gfx.Width(g, value, font), arrowY = y + (Settings.TextPx - 9) * scale;
+        Color c = up ? t.Up : t.Down;
+        if (Settings.ArrowsRight)
+        {
+            Gfx.Text(g, value, font, t.Text, back, right - aw - gap - valueW, y);
+            Gfx.Arrow(g, up, right - aw, arrowY, aw, ah, 1.5f * scale, c);
+        }
+        else
+        {
+            Gfx.Text(g, value, font, t.Text, back, right - valueW, y);
+            Gfx.Arrow(g, up, right - valueW - gap - aw, arrowY, aw, ah, 1.5f * scale, c);
+        }
     }
 
     // ---------- Win32 ----------

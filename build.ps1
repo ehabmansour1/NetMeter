@@ -5,5 +5,5 @@ $md = "C:\Windows\System32\WinMetadata"
   /r:"$fw\WPF\UIAutomationClient.dll" /r:"$fw\WPF\UIAutomationTypes.dll" /r:"$fw\WPF\WindowsBase.dll" `
   /r:"$fw\System.Runtime.dll" /r:"$fw\System.Runtime.WindowsRuntime.dll" `
   /r:"$md\Windows.Foundation.winmd" /r:"$md\Windows.Networking.winmd" `
-  "$PSScriptRoot\NetMeter.cs"
+  "$PSScriptRoot\NetMeter.cs" "$PSScriptRoot\SettingsForm.cs"
 
