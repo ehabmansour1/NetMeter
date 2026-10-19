@@ -15,7 +15,7 @@ Hover over it to see how much data you used **today** and **this month**.
 
 ## Settings
 
-Right-click the meter → **Settings…**. Changes apply immediately and are saved in `HKCU\Software\NetMeter`.
+Right-click the meter → **Settings…** (a sidebar with one tab per group below). Changes apply immediately and are saved in `HKCU\Software\NetMeter`.
 
 | Group | Settings |
 |---|---|

@@ -44,13 +44,14 @@ static class Program
                 bmp.Save(args[1]);
             return;
         }
-        if (args.Length == 2 && args[0] == "--settings")
+        if (args.Length >= 2 && args[0] == "--settings")
         {
             SetProcessDPIAware();
             Application.EnableVisualStyles();
             // Shows the real window for a moment and captures it from the screen.
             using (var f = new SettingsForm { ShowInTaskbar = false })
             {
+                if (args.Length > 2) f.SelectPage(int.Parse(args[2]));
                 f.Show();
                 for (int i = 0; i < 10; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
                 var r = f.Bounds;
