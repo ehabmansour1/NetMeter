@@ -15,6 +15,16 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Windows.Networking.Connectivity;
 
+// File metadata shown in Properties > Details (also required for code signing).
+[assembly: AssemblyTitle("NetMeter")]
+[assembly: AssemblyDescription("NetMeter - taskbar upload/download meter")]
+[assembly: AssemblyProduct("NetMeter")]
+[assembly: AssemblyCompany("Ehab Mansour")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 Ehab Mansour. MIT License.")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyInformationalVersion("1.1.0")]
+
 static class Program
 {
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
@@ -25,6 +35,12 @@ static class Program
         if (args.Length == 2 && args[0] == "--dump")
         {
             System.IO.File.WriteAllText(args[1], Usage.Query().ToText());
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--card")
+        {
+            using (var bmp = new UsageCard(1f).Build(Usage.Query(), Theme.Current()))
+                bmp.Save(args[1]);
             return;
         }
         bool created;
@@ -134,14 +150,37 @@ static class Gfx
         return new Font(fallback, px, FontStyle.Regular, GraphicsUnit.Pixel);
     }
 
+    // Text goes through GDI (TextRenderer) so it gets hinted ClearType like normal Windows apps.
+    // That needs an opaque background colour, and GDI leaves alpha at 0 - call MakeOpaque afterwards.
+    const TextFormatFlags Flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
+
     public static float Width(Graphics g, string s, Font f)
     {
-        return g.MeasureString(s, f, PointF.Empty, StringFormat.GenericTypographic).Width;
+        return TextRenderer.MeasureText(g, s, f, Size.Empty, Flags).Width;
     }
 
-    public static void Text(Graphics g, string s, Font f, Color c, float x, float y)
+    public static void Text(Graphics g, string s, Font f, Color c, Color back, float x, float y)
     {
-        using (var b = new SolidBrush(c)) g.DrawString(s, f, b, x, y, StringFormat.GenericTypographic);
+        TextRenderer.DrawText(g, s, f, new Point((int)Math.Round(x), (int)Math.Round(y)), c, back, Flags);
+    }
+
+    public static void MakeOpaque(Bitmap bmp)
+    {
+        var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        var px = new byte[data.Stride * data.Height];
+        Marshal.Copy(data.Scan0, px, 0, px.Length);
+        for (int i = 3; i < px.Length; i += 4) px[i] = 255;
+        Marshal.Copy(px, 0, data.Scan0, px.Length);
+        bmp.UnlockBits(data);
+    }
+
+    // Colour currently on screen at (x, y) - used to match the taskbar behind the meter.
+    public static Color ScreenPixel(int x, int y)
+    {
+        IntPtr dc = GetDC(IntPtr.Zero);
+        uint c = GetPixel(dc, x, y);
+        ReleaseDC(IntPtr.Zero, dc);
+        return Color.FromArgb((int)(c & 0xFF), (int)((c >> 8) & 0xFF), (int)((c >> 16) & 0xFF));
     }
 
     // Vector arrow (crisper than the font's arrow glyphs). (x, y) is the top-left of a w x h box.
@@ -169,20 +208,6 @@ static class Gfx
         p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
         p.CloseFigure();
         return p;
-    }
-
-    // Anti-aliased text on a transparent surface looks thin once Windows composites it; lift the
-    // partial-coverage alpha so strokes get the same weight as the taskbar clock.
-    public static void ThickenAlpha(Bitmap bmp, double gamma)
-    {
-        var lut = new byte[256];
-        for (int i = 0; i < 256; i++) lut[i] = i < 2 ? (byte)i : (byte)Math.Round(255 * Math.Pow(i / 255.0, gamma));
-        var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
-        var px = new byte[data.Stride * data.Height];
-        Marshal.Copy(data.Scan0, px, 0, px.Length);
-        for (int i = 3; i < px.Length; i += 4) px[i] = lut[px[i]];
-        Marshal.Copy(px, 0, data.Scan0, px.Length);
-        bmp.UnlockBits(data);
     }
 
     // Push a 32-bit ARGB bitmap to a layered window (per-pixel alpha) at screen position (x, y).
@@ -217,6 +242,7 @@ static class Gfx
     [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
     [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr dc, int x, int y);
 }
 
 // Borderless, never-activated, always-on-top window drawn with per-pixel alpha.
@@ -257,11 +283,42 @@ class UsageCard : LayeredForm
         ClickThrough = true;
     }
 
+    int Shadow { get { return (int)(12 * s); } }
+
     public void ShowAbove(Rectangle anchor, Usage u, Theme t)
     {
-        int shadow = (int)(12 * s), w = (int)(256 * s), h = (int)(196 * s);
-        using (var bmp = new Bitmap(w + 2 * shadow, h + 2 * shadow, PixelFormat.Format32bppArgb))
+        int shadow = Shadow;
+        using (var bmp = Build(u, t))
         {
+            // Centred above the meter, kept on screen, 8px gap above the taskbar.
+            var screen = Screen.FromRectangle(anchor).Bounds;
+            int px = anchor.Left + anchor.Width / 2 - bmp.Width / 2;
+            px = Math.Max(screen.Left, Math.Min(px, screen.Right - bmp.Width + shadow - (int)(8 * s)));
+            int py = anchor.Top - bmp.Height + shadow - (int)(8 * s);
+            Gfx.Present(Handle, bmp, px, py);
+        }
+        SetWindowPos(Handle, new IntPtr(-1) /*TOPMOST*/, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40 /*NOSIZE|NOMOVE|NOACTIVATE|SHOWWINDOW*/);
+        IsOpen = true;
+    }
+
+    // The whole card image, shadow included.
+    public Bitmap Build(Usage u, Theme t)
+    {
+        int shadow = Shadow, w = (int)(256 * s), h = (int)(196 * s);
+        var bmp = new Bitmap(w + 2 * shadow, h + 2 * shadow, PixelFormat.Format32bppArgb);
+        using (var content = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+        {
+            // Content first, on a solid background so the text gets ClearType.
+            using (var g = Graphics.FromImage(content))
+            {
+                g.Clear(t.CardBack);
+                float pad = 18 * s, x = pad, right = w - pad;
+                float y = Section(g, t, "TODAY", DateTime.Today.ToString("ddd, MMM d"), u.TodayDown, u.TodayUp, x, right, 16 * s);
+                using (var p = new Pen(t.Divider, 1)) g.DrawLine(p, pad, y, w - pad, y);
+                Section(g, t, "THIS MONTH", DateTime.Today.ToString("MMMM yyyy"), u.MonthDown, u.MonthUp, x, right, y + 14 * s);
+            }
+            Gfx.MakeOpaque(content);
+
             using (var g = Graphics.FromImage(bmp))
             {
                 g.Clear(Color.Transparent);
@@ -276,29 +333,19 @@ class UsageCard : LayeredForm
                     using (var b = new SolidBrush(Color.FromArgb((int)(t.Light ? 7 * k * k : 14 * k * k), 0, 0, 0)))
                         g.FillPath(b, path);
                 }
+                // Rounded card filled with the content (anti-aliased corners), then the border.
                 using (var path = Gfx.RoundRect(card, 8 * s))
                 {
-                    using (var b = new SolidBrush(t.CardBack)) g.FillPath(b, path);
+                    using (var b = new TextureBrush(content, WrapMode.Clamp))
+                    {
+                        b.TranslateTransform(shadow, shadow);
+                        g.FillPath(b, path);
+                    }
                     using (var p = new Pen(t.CardBorder, 1)) g.DrawPath(p, path);
                 }
-
-                g.TextRenderingHint = TextRenderingHint.AntiAlias;
-                float pad = 18 * s, x = card.X + pad, right = card.Right - pad;
-                float y = card.Y + 16 * s;
-                y = Section(g, t, "TODAY", DateTime.Today.ToString("ddd, MMM d"), u.TodayDown, u.TodayUp, x, right, y);
-                using (var p = new Pen(t.Divider, 1)) g.DrawLine(p, card.X + pad, y, card.Right - pad, y);
-                Section(g, t, "THIS MONTH", DateTime.Today.ToString("MMMM yyyy"), u.MonthDown, u.MonthUp, x, right, y + 14 * s);
             }
-
-            // Centred above the meter, kept on screen, 8px gap above the taskbar.
-            var screen = Screen.FromRectangle(anchor).Bounds;
-            int px = anchor.Left + anchor.Width / 2 - bmp.Width / 2;
-            px = Math.Max(screen.Left, Math.Min(px, screen.Right - bmp.Width + shadow - (int)(8 * s)));
-            int py = anchor.Top - bmp.Height + shadow - (int)(8 * s);
-            Gfx.Present(Handle, bmp, px, py);
         }
-        SetWindowPos(Handle, new IntPtr(-1) /*TOPMOST*/, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40 /*NOSIZE|NOMOVE|NOACTIVATE|SHOWWINDOW*/);
-        IsOpen = true;
+        return bmp;
     }
 
     public bool IsOpen { get; private set; }
@@ -320,16 +367,16 @@ class UsageCard : LayeredForm
         using (var big = Gfx.MakeFont("Segoe UI Variable Display Semib", 26 * s, "Segoe UI Semibold"))
         using (var body = Gfx.MakeFont("Segoe UI Variable Text", 13 * s, "Segoe UI"))
         {
-            Gfx.Text(g, label, small, t.Secondary, x, y);
-            Gfx.Text(g, when, small, t.Secondary, right - Gfx.Width(g, when, small), y);
+            Gfx.Text(g, label, small, t.Secondary, t.CardBack, x, y);
+            Gfx.Text(g, when, small, t.Secondary, t.CardBack, right - Gfx.Width(g, when, small), y);
 
-            Gfx.Text(g, Fmt.Size(down + up), big, t.Text, x - 1 * s, y + 16 * s);
+            Gfx.Text(g, Fmt.Size(down + up), big, t.Text, t.CardBack, x - 1 * s, y + 16 * s);
 
             float row = y + 52 * s, aw = 8 * s, ah = 10 * s, half = (right - x) / 2;
             Gfx.Arrow(g, false, x, row + 3 * s, aw, ah, 1.6f * s, t.Down);
-            Gfx.Text(g, Fmt.Size(down), body, t.Text, x + aw + 6 * s, row);
+            Gfx.Text(g, Fmt.Size(down), body, t.Text, t.CardBack, x + aw + 6 * s, row);
             Gfx.Arrow(g, true, x + half, row + 3 * s, aw, ah, 1.6f * s, t.Up);
-            Gfx.Text(g, Fmt.Size(up), body, t.Text, x + half + aw + 6 * s, row);
+            Gfx.Text(g, Fmt.Size(up), body, t.Text, t.CardBack, x + half + aw + 6 * s, row);
             return row + 28 * s;
         }
     }
@@ -350,12 +397,15 @@ class Meter : LayeredForm
     Usage usage;
     bool usageBusy, hiddenForFullscreen;
     int hoverTicks;
+    Color back = Color.FromArgb(32, 32, 32);
+    DateTime lastBackSample = DateTime.MinValue;
 
     public Meter()
     {
         using (var g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96f;
         W = (int)(76 * scale);
-        H = (int)(48 * scale);
+        // Shorter than the taskbar so the taskbar's 1px top edge stays visible above the meter.
+        H = (int)(40 * scale);
         Size = new Size(W, H);
         Text = "NetMeter";
         card = new UsageCard(scale);
@@ -378,7 +428,7 @@ class Meter : LayeredForm
             hiddenForFullscreen = full;
             if (full) Hide(); else Show();
         }
-        if (!full) PlaceNextToTray();
+        if (!full) { PlaceNextToTray(); MatchTaskbarColour(); }
 
         if ((DateTime.Now - lastSample).TotalMilliseconds >= 950) SampleSpeed();
         if ((DateTime.Now - lastUsage).TotalSeconds >= 30) RefreshUsage();
@@ -460,6 +510,16 @@ class Meter : LayeredForm
         });
     }
 
+    // The text needs a solid background for ClearType, so copy the taskbar colour from the
+    // small gap between the meter and the tray (re-checked every 2s: theme, wallpaper tint).
+    void MatchTaskbarColour()
+    {
+        if ((DateTime.Now - lastBackSample).TotalSeconds < 2) return;
+        lastBackSample = DateTime.Now;
+        var c = Gfx.ScreenPixel(Left + W + (int)(2 * scale), Top + H / 2);
+        if (c.ToArgb() != back.ToArgb()) { back = c; Render(); }
+    }
+
     // ---------- placement ----------
 
     void PlaceNextToTray()
@@ -504,14 +564,12 @@ class Meter : LayeredForm
             using (var g = Graphics.FromImage(bmp))
             using (var font = Gfx.MakeFont("Segoe UI Variable Text", 12 * scale, "Segoe UI"))
             {
-                // Alpha 1 instead of 0 so the whole box receives the mouse (hover + right-click).
-                g.Clear(Color.FromArgb(1, t.Text));
-                g.TextRenderingHint = TextRenderingHint.AntiAlias;
-                float lineH = 17 * scale, top = (H - 2 * lineH) / 2f + 1 * scale;
+                g.Clear(back);
+                float lineH = 17 * scale, top = (H - 2 * lineH) / 2f;
                 DrawLine(g, true, upText, top, font, t);
                 DrawLine(g, false, downText, top + lineH, font, t);
             }
-            Gfx.ThickenAlpha(bmp, 0.75);
+            Gfx.MakeOpaque(bmp);
             Gfx.Present(Handle, bmp, Left, Top);
         }
     }
@@ -521,7 +579,7 @@ class Meter : LayeredForm
     {
         float right = W - 2 * scale, valueW = Gfx.Width(g, value, font);
         float aw = 7 * scale, ah = 9 * scale;
-        Gfx.Text(g, value, font, t.Text, right - valueW, y);
+        Gfx.Text(g, value, font, t.Text, back, right - valueW, y);
         Gfx.Arrow(g, up, right - valueW - aw - 5 * scale, y + 3 * scale, aw, ah, 1.5f * scale, up ? t.Up : t.Down);
     }
 
