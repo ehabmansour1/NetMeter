@@ -21,9 +21,9 @@ using Windows.Networking.Connectivity;
 [assembly: AssemblyProduct("NetMeter")]
 [assembly: AssemblyCompany("Ehab Mansour")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 Ehab Mansour. MIT License.")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
-[assembly: AssemblyInformationalVersion("1.1.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyInformationalVersion("1.2.0")]
 
 static class Program
 {
@@ -47,9 +47,56 @@ static class Program
         var mutex = new System.Threading.Mutex(true, "NetMeter_SingleInstance", out created);
         if (!created) return;
         SetProcessDPIAware();
+        AutoStart.Init();
         Application.EnableVisualStyles();
         Application.Run(new Meter());
         GC.KeepAlive(mutex);
+    }
+}
+
+// ---------- start with Windows (HKCU Run key, no admin needed) ----------
+
+static class AutoStart
+{
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", AppKey = @"Software\NetMeter", Name = "NetMeter";
+
+    static string Command { get { return "\"" + Application.ExecutablePath + "\""; } }
+
+    public static bool Enabled
+    {
+        get
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey))
+                return k != null && k.GetValue(Name) != null;
+        }
+    }
+
+    public static void Set(bool on)
+    {
+        using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
+        {
+            if (on) k.SetValue(Name, Command);
+            else k.DeleteValue(Name, false);
+        }
+    }
+
+    // The first launch turns auto-start on; after that the menu choice is respected.
+    // While it's on, the path is refreshed in case the exe was moved.
+    public static void Init()
+    {
+        try
+        {
+            using (var app = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AppKey))
+            {
+                if (app.GetValue("AutoStartConfigured") == null)
+                {
+                    Set(true);
+                    app.SetValue("AutoStartConfigured", 1);
+                }
+                else if (Enabled) Set(true);
+            }
+        }
+        catch { }
     }
 }
 
@@ -412,6 +459,10 @@ class Meter : LayeredForm
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Refresh usage", null, delegate { RefreshUsage(); });
+        var autoStart = new ToolStripMenuItem("Start with Windows") { CheckOnClick = true, Checked = AutoStart.Enabled };
+        autoStart.CheckedChanged += delegate { AutoStart.Set(autoStart.Checked); };
+        menu.Opening += delegate { autoStart.Checked = AutoStart.Enabled; };
+        menu.Items.Add(autoStart);
         menu.Items.Add("Exit", null, delegate { Close(); });
         ContextMenuStrip = menu;
 

@@ -7,16 +7,17 @@ Hover over it to see how much data you used **today** and **this month**.
 - Today / month totals come from Windows' own usage data — the same numbers as
   *Settings → Network & internet → Data usage*.
 - Follows the Windows light / dark theme; hides while a full-screen app is in front.
-- Right-click the meter for **Refresh usage** and **Exit**.
+- Starts with Windows automatically after the first run (untick **Start with Windows** in the right-click menu to stop that).
+- Right-click the meter for **Refresh usage**, **Start with Windows** and **Exit**.
 - ~20 KB, no install, no dependencies (.NET Framework 4.8, built into Windows).
 
 ## Install
 
 1. Download `NetMeter.exe` from the [latest release](../../releases/latest) and put it in a folder you keep, e.g. `C:\Users\<you>\NetMeter\`.
 2. Run it. (Until signed releases are available, Windows SmartScreen may ask you to confirm — *More info → Run anyway*.)
-3. To start it with Windows, press `Win + R`, type `shell:startup`, and put a shortcut to `NetMeter.exe` in that folder.
+3. That's it — the first run sets it to start with Windows (a per-user `Run` registry entry; no admin needed). If you move the exe later, just run it once from the new place.
 
-To remove it: right-click the meter → **Exit**, then delete the exe and the startup shortcut.
+To remove it: right-click the meter → untick **Start with Windows** → **Exit**, then delete the exe.
 
 ## Build from source
 
