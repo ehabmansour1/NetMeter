@@ -593,7 +593,7 @@ class UsageCard : LayeredForm
     public Bitmap Build(Usage u, Theme t)
     {
         int apps = u.TopApps.Count;
-        int shadow = Shadow, w = (int)(272 * s), h = (int)((apps > 0 ? 236 + 30 * apps : 196) * s);
+        int shadow = Shadow, w = (int)(240 * s), h = (int)((apps > 0 ? 236 + 30 * apps : 196) * s);
         var bmp = new Bitmap(w + 2 * shadow, h + 2 * shadow, PixelFormat.Format32bppArgb);
         using (var content = new Bitmap(w, h, PixelFormat.Format32bppArgb))
         {
