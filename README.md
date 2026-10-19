@@ -39,6 +39,13 @@ Windows 11 has no built-in internet speed indicator on the taskbar, and classic 
 2. Run it. Windows SmartScreen may say *"Windows protected your PC"* because the exe isn't code-signed yet — click **More info → Run anyway**.
 3. That's it. The first run sets NetMeter to **start with Windows** (per-user, no admin). If you move the exe later, run it once from the new place.
 
+**Or with [Scoop](https://scoop.sh):**
+
+```powershell
+scoop bucket add ehabmansour1 https://github.com/ehabmansour1/scoop-bucket
+scoop install netmeter
+```
+
 **Uninstall:** right-click the meter → **Settings…** → turn off *Start with Windows* → right-click → **Exit**, then delete the exe.
 
 Requirements: Windows 11 with .NET Framework 4.8, which is built into Windows. (Windows 10 is untested.)
