@@ -839,13 +839,13 @@ class Meter : LayeredForm
         }
     }
 
-    // Right-aligned so the numbers sit next to the tray; the arrow sits just left of its number.
+    // Arrows in a column at the right edge (next to the tray); each number is right-aligned against its arrow.
     void DrawLine(Graphics g, bool up, string value, float y, Font font, Theme t)
     {
-        float right = W - 2 * scale, valueW = Gfx.Width(g, value, font);
-        float aw = 7 * scale, ah = 9 * scale;
-        Gfx.Text(g, value, font, t.Text, back, right - valueW, y);
-        Gfx.Arrow(g, up, right - valueW - aw - 5 * scale, y + 3 * scale, aw, ah, 1.5f * scale, up ? t.Up : t.Down);
+        float aw = 7 * scale, ah = 9 * scale, arrowX = W - 2 * scale - aw;
+        float valueW = Gfx.Width(g, value, font);
+        Gfx.Text(g, value, font, t.Text, back, arrowX - 5 * scale - valueW, y);
+        Gfx.Arrow(g, up, arrowX, y + 3 * scale, aw, ah, 1.5f * scale, up ? t.Up : t.Down);
     }
 
     // ---------- Win32 ----------
