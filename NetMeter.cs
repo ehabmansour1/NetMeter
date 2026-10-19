@@ -589,11 +589,40 @@ class UsageCard : LayeredForm
         IsOpen = true;
     }
 
+    const float MaxAppName = 150;
+    float splitCol;   // x offset of the upload column, shared by both sections so they line up
+
+    // Card width that fits the content (no fixed width, so no empty space).
+    int ContentWidth(Usage u)
+    {
+        using (var bmp = new Bitmap(1, 1))
+        using (var g = Graphics.FromImage(bmp))
+        using (var small = Gfx.MakeFont("Segoe UI Variable Small Semibol", 11 * s, "Segoe UI Semibold"))
+        using (var big = Gfx.MakeFont("Segoe UI Variable Display Semib", 26 * s, "Segoe UI Semibold"))
+        using (var body = Gfx.MakeFont("Segoe UI Variable Text", 13 * s, "Segoe UI"))
+        {
+            float aw = 8 * s, arrowGap = 6 * s, colGap = 22 * s, labelGap = 24 * s;
+            string monthLabel = Settings.MonthStartDay != 1 ? "BILLING MONTH" : "THIS MONTH";
+            string monthWhen = Settings.MonthStartDay != 1 ? "Since " + Settings.MonthStart().ToString("MMM d") : DateTime.Today.ToString("MMMM yyyy");
+
+            splitCol = aw + arrowGap + Math.Max(Gfx.Width(g, Fmt.Size(u.TodayDown), body), Gfx.Width(g, Fmt.Size(u.MonthDown), body)) + colGap;
+            float split = splitCol + aw + arrowGap + Math.Max(Gfx.Width(g, Fmt.Size(u.TodayUp), body), Gfx.Width(g, Fmt.Size(u.MonthUp), body));
+
+            float need = Math.Max(split, Math.Max(
+                Gfx.Width(g, "TODAY", small) + labelGap + Gfx.Width(g, DateTime.Today.ToString("ddd, MMM d"), small),
+                Gfx.Width(g, monthLabel, small) + labelGap + Gfx.Width(g, monthWhen, small)));
+            need = Math.Max(need, Gfx.Width(g, Fmt.Size(u.MonthDown + u.MonthUp), big));
+            foreach (var a in u.TopApps)
+                need = Math.Max(need, 26 * s + Math.Min(Gfx.Width(g, a.Name, body), MaxAppName * s) + 14 * s + Gfx.Width(g, Fmt.Size(a.Bytes), body));
+            return (int)Math.Ceiling(need + 2 * 18 * s);
+        }
+    }
+
     // The whole card image, shadow included.
     public Bitmap Build(Usage u, Theme t)
     {
         int apps = u.TopApps.Count;
-        int shadow = Shadow, w = (int)(240 * s), h = (int)((apps > 0 ? 236 + 30 * apps : 196) * s);
+        int shadow = Shadow, w = ContentWidth(u), h = (int)((apps > 0 ? 236 + 30 * apps : 196) * s);
         var bmp = new Bitmap(w + 2 * shadow, h + 2 * shadow, PixelFormat.Format32bppArgb);
         using (var content = new Bitmap(w, h, PixelFormat.Format32bppArgb))
         {
@@ -669,7 +698,7 @@ class UsageCard : LayeredForm
 
             Gfx.Text(g, Fmt.Size(down + up), big, t.Text, t.CardBack, x - 1 * s, y + 16 * s);
 
-            float row = y + 52 * s, aw = 8 * s, ah = 10 * s, half = (right - x) / 2;
+            float row = y + 52 * s, aw = 8 * s, ah = 10 * s, half = splitCol;
             Gfx.Arrow(g, false, x, row + 3 * s, aw, ah, 1.6f * s, t.Down);
             Gfx.Text(g, Fmt.Size(down), body, t.Text, t.CardBack, x + aw + 6 * s, row);
             Gfx.Arrow(g, true, x + half, row + 3 * s, aw, ah, 1.6f * s, t.Up);
