@@ -701,7 +701,10 @@ class UsageCard : LayeredForm
             Gfx.Text(g, label, small, t.Secondary, t.CardBack, x, y);
             Gfx.Text(g, when, small, t.Secondary, t.CardBack, right - Gfx.Width(g, when, small), y);
 
-            Gfx.Text(g, Fmt.Size(down + up), big, t.Text, t.CardBack, x - 1 * s, y + 16 * s);
+            // Totals only: centre the number; with the down/up line it stays left-aligned above it.
+            string total = Fmt.Size(down + up);
+            float tx = Settings.ShowSplit ? x - 1 * s : (x + right - Gfx.Width(g, total, big)) / 2;
+            Gfx.Text(g, total, big, t.Text, t.CardBack, tx, y + 16 * s);
 
             if (!Settings.ShowSplit) return y + 56 * s;
             float row = y + 52 * s, aw = 8 * s, ah = 10 * s, half = splitCol;
