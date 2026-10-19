@@ -21,9 +21,9 @@ using Windows.Networking.Connectivity;
 [assembly: AssemblyProduct("NetMeter")]
 [assembly: AssemblyCompany("Ehab Mansour")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 Ehab Mansour. MIT License.")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
-[assembly: AssemblyInformationalVersion("1.2.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyInformationalVersion("1.3.0")]
 
 static class Program
 {
