@@ -257,11 +257,15 @@ static class Fmt
         return g.ToString(g < 10 ? "0.00" : g < 100 ? "0.0" : "0") + " GB";
     }
 
-    public static string Speed(double bps)
+    // style 0: "1.5 KB/s", 1: "1.5K/s", 2: "1.5K" (shorter forms for a narrow meter)
+    public static string Speed(double bps, int style)
     {
-        if (bps < 1024) return ((int)bps) + " B/s";
-        if (bps < MB) return (bps / 1024).ToString(bps < 10 * 1024 ? "0.0" : "0") + " KB/s";
-        return (bps / MB).ToString(bps < 10 * MB ? "0.0" : "0") + " MB/s";
+        string num, unit;
+        if (bps < 1024) { num = ((int)bps).ToString(); unit = "B"; }
+        else if (bps < MB) { num = (bps / 1024).ToString(bps < 10 * 1024 ? "0.0" : "0"); unit = "K"; }
+        else { num = (bps / MB).ToString(bps < 10 * MB ? "0.0" : "0"); unit = "M"; }
+        if (style == 0) return num + " " + (unit == "B" ? "B" : unit + "B") + "/s";
+        return num + unit + (style == 1 ? "/s" : "");
     }
 }
 
@@ -586,12 +590,13 @@ class Meter : LayeredForm
 {
     readonly Timer tick = new Timer { Interval = 250 };
     readonly float scale;
-    readonly int W, H;
+    readonly int H, FullWidth, MinWidth;
+    int W;
     readonly UsageCard card;
 
     long lastRx = -1, lastTx = -1;
     DateTime lastSample = DateTime.MinValue, lastUsage = DateTime.MinValue;
-    string upText = "0 B/s", downText = "0 B/s";
+    double upBps, downBps;
     Usage usage;
     bool usageBusy, hiddenForFullscreen;
     int hoverTicks;
@@ -601,7 +606,8 @@ class Meter : LayeredForm
     public Meter()
     {
         using (var g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96f;
-        W = (int)(76 * scale);
+        FullWidth = W = (int)(76 * scale);
+        MinWidth = (int)(40 * scale);
         // Shorter than the taskbar so the taskbar's 1px top edge stays visible above the meter.
         H = (int)(40 * scale);
         Size = new Size(W, H);
@@ -667,8 +673,8 @@ class Meter : LayeredForm
         if (lastRx >= 0)
         {
             double secs = (now - lastSample).TotalSeconds;
-            upText = Fmt.Speed(Math.Max(0, tx - lastTx) / secs);
-            downText = Fmt.Speed(Math.Max(0, rx - lastRx) / secs);
+            upBps = Math.Max(0, tx - lastTx) / secs;
+            downBps = Math.Max(0, rx - lastRx) / secs;
             Render();
         }
         lastRx = rx; lastTx = tx; lastSample = now;
@@ -724,6 +730,42 @@ class Meter : LayeredForm
 
     // ---------- placement ----------
 
+    int appsRight = -1;
+    bool scanBusy;
+    DateTime lastScan = DateTime.MinValue;
+
+    // Right edge of the Start/Search/app buttons (Windows 11 draws them in XAML, so only UI Automation
+    // can see them). Runs in the background every 2s.
+    void ScanTaskbarButtons()
+    {
+        if (scanBusy || (DateTime.Now - lastScan).TotalSeconds < 2) return;
+        scanBusy = true;
+        lastScan = DateTime.Now;
+        IntPtr taskbar = FindWindow("Shell_TrayWnd", null);
+        Task.Run(() =>
+        {
+            int r = -1;
+            try
+            {
+                var cond = new System.Windows.Automation.OrCondition(
+                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.ClassNameProperty, "Taskbar.TaskListButtonAutomationPeer"),
+                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.AutomationIdProperty, "StartButton"),
+                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.AutomationIdProperty, "SearchButton"),
+                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.AutomationIdProperty, "TaskViewButton"),
+                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.AutomationIdProperty, "WidgetsButton"));
+                var root = System.Windows.Automation.AutomationElement.FromHandle(taskbar);
+                foreach (System.Windows.Automation.AutomationElement e in root.FindAll(System.Windows.Automation.TreeScope.Descendants, cond))
+                {
+                    var b = e.Current.BoundingRectangle;
+                    if (b.IsEmpty || b.Width <= 0) continue;
+                    if (b.Right > r) r = (int)b.Right;
+                }
+            }
+            catch { }
+            BeginInvoke((Action)delegate { appsRight = r; scanBusy = false; });
+        });
+    }
+
     void PlaceNextToTray()
     {
         IntPtr taskbar = FindWindow("Shell_TrayWnd", null);
@@ -732,9 +774,21 @@ class Meter : LayeredForm
         GetWindowRect(taskbar, out tb);
         IntPtr trayWnd = FindWindowEx(taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
         int right = trayWnd != IntPtr.Zero && GetWindowRect(trayWnd, out tray) && tray.Left > tb.Left ? tray.Left : tb.Right - (int)(200 * scale);
-        int x = right - W - (int)(4 * scale);
+        int gap = (int)(4 * scale);
+
+        // Stay next to the tray; when the app buttons reach into that space, shrink to the free gap
+        // (Render switches to a shorter number format) instead of covering the last button.
+        ScanTaskbarButtons();
+        int width = FullWidth;
+        if (appsRight > 0 && appsRight < right)
+            width = Math.Max(MinWidth, Math.Min(FullWidth, right - appsRight - 2 * gap));
+        bool resized = width != W;
+        W = width;
+
+        int x = right - W - gap;
         int y = tb.Top + (tb.Bottom - tb.Top - H) / 2;
         SetWindowPos(Handle, HWND_TOPMOST, x, y, W, H, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (resized) Render();
     }
 
     static bool ForegroundIsFullscreen()
@@ -767,9 +821,18 @@ class Meter : LayeredForm
             using (var font = Gfx.MakeFont("Segoe UI Variable Text", 12 * scale, "Segoe UI"))
             {
                 g.Clear(back);
+                // Longest number format that fits the current width: "1.5 KB/s", then "1.5K/s", then "1.5K".
+                string up = null, down = null;
+                for (int style = 0; style <= 2; style++)
+                {
+                    up = Fmt.Speed(upBps, style);
+                    down = Fmt.Speed(downBps, style);
+                    float need = 2 * scale + Math.Max(Gfx.Width(g, up, font), Gfx.Width(g, down, font)) + 5 * scale + 7 * scale + 2 * scale;
+                    if (need <= W) break;
+                }
                 float lineH = 17 * scale, top = (H - 2 * lineH) / 2f;
-                DrawLine(g, true, upText, top, font, t);
-                DrawLine(g, false, downText, top + lineH, font, t);
+                DrawLine(g, true, up, top, font, t);
+                DrawLine(g, false, down, top + lineH, font, t);
             }
             Gfx.MakeOpaque(bmp);
             Gfx.Present(Handle, bmp, Left, Top);

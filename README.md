@@ -8,6 +8,7 @@ Hover over it to see how much data you used **today** and **this month**.
   *Settings → Network & internet → Data usage*.
 - The hover card also lists the **top 5 apps** by data used today, with their icons.
 - Follows the Windows light / dark theme; hides while a full-screen app is in front.
+- Sits next to the tray; if your app buttons fill that space, it shrinks (shorter "1.5K/s" numbers) instead of covering them.
 - Starts with Windows automatically after the first run (untick **Start with Windows** in the right-click menu to stop that).
 - Right-click the meter for **Refresh usage**, **Start with Windows** and **Exit**.
 - ~20 KB, no install, no dependencies (.NET Framework 4.8, built into Windows).
