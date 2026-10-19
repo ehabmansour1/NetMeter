@@ -68,6 +68,7 @@ class SettingsForm : Form
             Settings.TinyAsZero, v => Settings.TinyAsZero = v));
 
         Section("Hover card");
+        Add(Toggle("Show download / upload", "Off shows only the totals", Settings.ShowSplit, v => Settings.ShowSplit = v));
         Add(Toggle("Show top apps", null, Settings.ShowTopApps, v => Settings.ShowTopApps = v));
         Add(Choice("Number of apps", null, new[] { "3", "5", "10" },
             new[] { 3, 5, 10 }, Settings.TopAppsCount, v => Settings.TopAppsCount = v));

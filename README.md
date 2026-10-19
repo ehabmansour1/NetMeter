@@ -20,7 +20,7 @@ Right-click the meter → **Settings…**. Changes apply immediately and are sav
 |---|---|
 | General | Start with Windows · update every 0.5 / 1 / 2 s · bytes (MB/s) or bits (Mbps) |
 | Appearance | Text size · arrows right or left of the numbers · upload / download colors · show speeds under 1 KB/s as 0 |
-| Hover card | Show top apps · number of apps (3 / 5 / 10) · delay before the card appears |
+| Hover card | Show the download / upload line or only totals · show top apps · number of apps (3 / 5 / 10) · delay before the card appears |
 | Data | 1 GB = 1024 MB (like Windows) or 1000 MB (like ISPs) · day the month starts (match your internet bill) |
 - ~20 KB, no install, no dependencies (.NET Framework 4.8, built into Windows).
 

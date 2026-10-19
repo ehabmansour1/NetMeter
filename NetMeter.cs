@@ -90,6 +90,7 @@ static class Settings
     public static int HoverDelayMs = 400;       // 0 / 400 / 1000
     public static bool DecimalUnits;            // 1 GB = 1000^3 (ISP style) instead of 1024^3
     public static int MonthStartDay = 1;        // 1..28 (billing day)
+    public static bool ShowSplit = true;        // download / upload line under each total on the card
 
     public static event Action Changed;
 
@@ -112,6 +113,7 @@ static class Settings
                 HoverDelayMs = Get(k, "HoverDelayMs", HoverDelayMs);
                 DecimalUnits = Get(k, "DecimalUnits", 0) == 1;
                 MonthStartDay = Math.Max(1, Math.Min(28, Get(k, "MonthStartDay", 1)));
+                ShowSplit = Get(k, "ShowSplit", 1) == 1;
             }
         }
         catch { }
@@ -135,6 +137,7 @@ static class Settings
                 k.SetValue("HoverDelayMs", HoverDelayMs);
                 k.SetValue("DecimalUnits", DecimalUnits ? 1 : 0);
                 k.SetValue("MonthStartDay", MonthStartDay);
+                k.SetValue("ShowSplit", ShowSplit ? 1 : 0);
             }
         }
         catch { }
@@ -144,7 +147,7 @@ static class Settings
     public static void ResetDefaults()
     {
         UpdateMs = 1000; Bits = false; TextPx = 12; ArrowsRight = true; UpColor = 0; DownColor = 0;
-        TinyAsZero = false; ShowTopApps = true; TopAppsCount = 5; HoverDelayMs = 400; DecimalUnits = false; MonthStartDay = 1;
+        TinyAsZero = false; ShowTopApps = true; TopAppsCount = 5; HoverDelayMs = 400; DecimalUnits = false; MonthStartDay = 1; ShowSplit = true;
         Save();
     }
 
@@ -608,7 +611,7 @@ class UsageCard : LayeredForm
             splitCol = aw + arrowGap + Math.Max(Gfx.Width(g, Fmt.Size(u.TodayDown), body), Gfx.Width(g, Fmt.Size(u.MonthDown), body)) + colGap;
             float split = splitCol + aw + arrowGap + Math.Max(Gfx.Width(g, Fmt.Size(u.TodayUp), body), Gfx.Width(g, Fmt.Size(u.MonthUp), body));
 
-            float need = Math.Max(split, Math.Max(
+            float need = Math.Max(Settings.ShowSplit ? split : 0, Math.Max(
                 Gfx.Width(g, "TODAY", small) + labelGap + Gfx.Width(g, DateTime.Today.ToString("ddd, MMM d"), small),
                 Gfx.Width(g, monthLabel, small) + labelGap + Gfx.Width(g, monthWhen, small)));
             need = Math.Max(need, Gfx.Width(g, Fmt.Size(u.MonthDown + u.MonthUp), big));
@@ -622,7 +625,9 @@ class UsageCard : LayeredForm
     public Bitmap Build(Usage u, Theme t)
     {
         int apps = u.TopApps.Count;
-        int shadow = Shadow, w = ContentWidth(u), h = (int)((apps > 0 ? 236 + 30 * apps : 196) * s);
+        // top 16 + two sections (80 with the down/up line, 56 without) + 14 between, then the apps block
+        int section = Settings.ShowSplit ? 80 : 56, totals = 16 + section + 14 + section;
+        int shadow = Shadow, w = ContentWidth(u), h = (int)((apps > 0 ? totals + 46 + 30 * apps : totals + 6) * s);
         var bmp = new Bitmap(w + 2 * shadow, h + 2 * shadow, PixelFormat.Format32bppArgb);
         using (var content = new Bitmap(w, h, PixelFormat.Format32bppArgb))
         {
@@ -698,6 +703,7 @@ class UsageCard : LayeredForm
 
             Gfx.Text(g, Fmt.Size(down + up), big, t.Text, t.CardBack, x - 1 * s, y + 16 * s);
 
+            if (!Settings.ShowSplit) return y + 56 * s;
             float row = y + 52 * s, aw = 8 * s, ah = 10 * s, half = splitCol;
             Gfx.Arrow(g, false, x, row + 3 * s, aw, ah, 1.6f * s, t.Down);
             Gfx.Text(g, Fmt.Size(down), body, t.Text, t.CardBack, x + aw + 6 * s, row);
