@@ -50,5 +50,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # checkout leaves a lightweight tag; fetch the annotated one so its message becomes the notes
+          git fetch --force origin "refs/tags/$($env:GITHUB_REF_NAME):refs/tags/$($env:GITHUB_REF_NAME)"
           $exe = if (Test-Path signed/NetMeter.exe) { 'signed/NetMeter.exe' } else { 'NetMeter.exe' }
           gh release create $env:GITHUB_REF_NAME $exe --title "NetMeter $env:GITHUB_REF_NAME" --notes-from-tag
