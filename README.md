@@ -6,6 +6,7 @@ Hover over it to see how much data you used **today** and **this month**.
 - Speed updates every second (physical adapters only; Hyper-V / VPN / virtual adapters are skipped).
 - Today / month totals come from Windows' own usage data — the same numbers as
   *Settings → Network & internet → Data usage*.
+- The hover card also lists the **top 5 apps** by data used today, with their icons.
 - Follows the Windows light / dark theme; hides while a full-screen app is in front.
 - Starts with Windows automatically after the first run (untick **Start with Windows** in the right-click menu to stop that).
 - Right-click the meter for **Refresh usage**, **Start with Windows** and **Exit**.

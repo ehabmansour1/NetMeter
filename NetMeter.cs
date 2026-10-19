@@ -102,9 +102,17 @@ static class AutoStart
 
 // ---------- today / month usage (same data as Settings > Network > Data usage) ----------
 
+class AppUse
+{
+    public string Name;
+    public ulong Bytes;
+    public Bitmap Icon;   // may be null (services, packaged apps)
+}
+
 class Usage
 {
     public ulong TodayDown, TodayUp, MonthDown, MonthUp;
+    public List<AppUse> TopApps = new List<AppUse>();
 
     // The C# 5 compiler that ships with Windows can't bind AsTask<T> to WinRT async operations,
     // so it is resolved by reflection (the same thing PowerShell does).
@@ -112,12 +120,32 @@ class Usage
         m.Name == "AsTask" && m.IsGenericMethod && m.GetParameters().Length == 1 &&
         m.GetParameters()[0].ParameterType.Name == "IAsyncOperation`1");
 
+    static IEnumerable<T> Await<T>(object op)
+    {
+        var task = (Task)AsTaskOp.MakeGenericMethod(typeof(IReadOnlyList<T>)).Invoke(null, new[] { op });
+        task.Wait();
+        return ((System.Collections.IEnumerable)task.GetType().GetProperty("Result").GetValue(task)).Cast<T>();
+    }
+
     static IEnumerable<NetworkUsage> Read(ConnectionProfile p, DateTimeOffset from, DateTimeOffset to, NetworkUsageStates states)
     {
-        object op = p.GetNetworkUsageAsync(from, to, DataUsageGranularity.Total, states);
-        var task = (Task)AsTaskOp.MakeGenericMethod(typeof(IReadOnlyList<NetworkUsage>)).Invoke(null, new[] { op });
-        task.Wait();
-        return ((System.Collections.IEnumerable)task.GetType().GetProperty("Result").GetValue(task)).Cast<NetworkUsage>();
+        return Await<NetworkUsage>(p.GetNetworkUsageAsync(from, to, DataUsageGranularity.Total, states));
+    }
+
+    // Today's usage per app, merged by display name, biggest first.
+    static List<AppUse> TopAppsToday(IEnumerable<ConnectionProfile> profiles, DateTimeOffset from, DateTimeOffset to, NetworkUsageStates states, int count)
+    {
+        var byName = new Dictionary<string, AppUse>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in profiles)
+            foreach (var a in Await<AttributedNetworkUsage>(p.GetAttributedNetworkUsageAsync(from, to, states)))
+            {
+                string exe;
+                string name = AppNames.Friendly(a.AttributionId, a.AttributionName, out exe);
+                AppUse e;
+                if (!byName.TryGetValue(name, out e)) byName[name] = e = new AppUse { Name = name, Icon = AppNames.Icon(exe) };
+                e.Bytes += a.BytesReceived + a.BytesSent;
+            }
+        return byName.Values.Where(e => e.Bytes > 0).OrderByDescending(e => e.Bytes).Take(count).ToList();
     }
 
     public static Usage Query()
@@ -127,19 +155,95 @@ class Usage
         var monthStart = new DateTimeOffset(new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1));
         var states = new NetworkUsageStates { Roaming = TriStates.DoNotCare, Shared = TriStates.DoNotCare };
         var r = new Usage();
-        foreach (var p in NetworkInformation.GetConnectionProfiles())
+        var profiles = NetworkInformation.GetConnectionProfiles();
+        foreach (var p in profiles)
         {
             foreach (var u in Read(p, today, now, states)) { r.TodayDown += u.BytesReceived; r.TodayUp += u.BytesSent; }
             foreach (var u in Read(p, monthStart, now, states)) { r.MonthDown += u.BytesReceived; r.MonthUp += u.BytesSent; }
         }
+        try { r.TopApps = TopAppsToday(profiles, today, now, states, 5); }
+        catch { }
         return r;
     }
 
     public string ToText()
     {
-        return "Today: " + Fmt.Size(TodayDown + TodayUp) + "  (down " + Fmt.Size(TodayDown) + ", up " + Fmt.Size(TodayUp) + ")\r\n" +
-               "This month: " + Fmt.Size(MonthDown + MonthUp) + "  (down " + Fmt.Size(MonthDown) + ", up " + Fmt.Size(MonthUp) + ")";
+        var sb = new StringBuilder();
+        sb.AppendLine("Today: " + Fmt.Size(TodayDown + TodayUp) + "  (down " + Fmt.Size(TodayDown) + ", up " + Fmt.Size(TodayUp) + ")");
+        sb.AppendLine("This month: " + Fmt.Size(MonthDown + MonthUp) + "  (down " + Fmt.Size(MonthDown) + ", up " + Fmt.Size(MonthUp) + ")");
+        sb.AppendLine("Top apps today:");
+        foreach (var a in TopApps) sb.AppendLine("  " + Fmt.Size(a.Bytes) + "  " + a.Name);
+        return sb.ToString();
     }
+}
+
+// Turns the usage records' app IDs (\device\harddiskvolumeN\...\app.exe, package family names,
+// service names) into readable names and icons.
+static class AppNames
+{
+    static readonly Dictionary<string, Bitmap> icons = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
+
+    public static string Friendly(string id, string name, out string exe)
+    {
+        exe = null;
+        if (!string.IsNullOrEmpty(name)) return name;
+        if (string.IsNullOrEmpty(id)) return "Windows (system)";
+        if (id.StartsWith(@"\device\", StringComparison.OrdinalIgnoreCase))
+        {
+            exe = DosPath(id);
+            string file = System.IO.Path.GetFileNameWithoutExtension(id);
+            if (exe != null)
+            {
+                try
+                {
+                    string desc = System.Diagnostics.FileVersionInfo.GetVersionInfo(exe).FileDescription;
+                    if (!string.IsNullOrWhiteSpace(desc)) return desc.Trim();
+                }
+                catch { }
+            }
+            return file;
+        }
+        int us = id.LastIndexOf('_');
+        if (us > 0)   // packaged app: Publisher.AppName_hash
+        {
+            string family = id.Substring(0, us);
+            return family.Substring(family.LastIndexOf('.') + 1);
+        }
+        return id;    // service name, e.g. DoSvc
+    }
+
+    public static Bitmap Icon(string exe)
+    {
+        if (exe == null) return null;
+        Bitmap b;
+        lock (icons)
+        {
+            if (icons.TryGetValue(exe, out b)) return b;
+            try
+            {
+                using (var ico = System.Drawing.Icon.ExtractAssociatedIcon(exe)) b = ico.ToBitmap();
+            }
+            catch { b = null; }
+            icons[exe] = b;
+            return b;
+        }
+    }
+
+    static string DosPath(string devicePath)
+    {
+        foreach (var drive in Environment.GetLogicalDrives())
+        {
+            string d = drive.TrimEnd('\\');
+            var sb = new StringBuilder(260);
+            if (QueryDosDevice(d, sb, sb.Capacity) == 0) continue;
+            string dev = sb.ToString() + @"\";
+            if (devicePath.StartsWith(dev, StringComparison.OrdinalIgnoreCase))
+                return d + @"\" + devicePath.Substring(dev.Length);
+        }
+        return null;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern uint QueryDosDevice(string device, StringBuilder target, int max);
 }
 
 static class Fmt
@@ -209,6 +313,13 @@ static class Gfx
     public static void Text(Graphics g, string s, Font f, Color c, Color back, float x, float y)
     {
         TextRenderer.DrawText(g, s, f, new Point((int)Math.Round(x), (int)Math.Round(y)), c, back, Flags);
+    }
+
+    // Like Text, but cut with "…" if wider than maxWidth.
+    public static void TextFit(Graphics g, string s, Font f, Color c, Color back, float x, float y, float maxWidth)
+    {
+        var r = new Rectangle((int)Math.Round(x), (int)Math.Round(y), (int)Math.Max(1, maxWidth), f.Height + 2);
+        TextRenderer.DrawText(g, s, f, r, c, back, Flags | TextFormatFlags.EndEllipsis);
     }
 
     public static void MakeOpaque(Bitmap bmp)
@@ -351,7 +462,8 @@ class UsageCard : LayeredForm
     // The whole card image, shadow included.
     public Bitmap Build(Usage u, Theme t)
     {
-        int shadow = Shadow, w = (int)(256 * s), h = (int)(196 * s);
+        int apps = u.TopApps.Count;
+        int shadow = Shadow, w = (int)(272 * s), h = (int)((apps > 0 ? 236 + 30 * apps : 196) * s);
         var bmp = new Bitmap(w + 2 * shadow, h + 2 * shadow, PixelFormat.Format32bppArgb);
         using (var content = new Bitmap(w, h, PixelFormat.Format32bppArgb))
         {
@@ -362,7 +474,12 @@ class UsageCard : LayeredForm
                 float pad = 18 * s, x = pad, right = w - pad;
                 float y = Section(g, t, "TODAY", DateTime.Today.ToString("ddd, MMM d"), u.TodayDown, u.TodayUp, x, right, 16 * s);
                 using (var p = new Pen(t.Divider, 1)) g.DrawLine(p, pad, y, w - pad, y);
-                Section(g, t, "THIS MONTH", DateTime.Today.ToString("MMMM yyyy"), u.MonthDown, u.MonthUp, x, right, y + 14 * s);
+                y = Section(g, t, "THIS MONTH", DateTime.Today.ToString("MMMM yyyy"), u.MonthDown, u.MonthUp, x, right, y + 14 * s);
+                if (apps > 0)
+                {
+                    using (var p = new Pen(t.Divider, 1)) g.DrawLine(p, pad, y, w - pad, y);
+                    TopApps(g, t, u.TopApps, x, right, y + 14 * s);
+                }
             }
             Gfx.MakeOpaque(content);
 
@@ -425,6 +542,40 @@ class UsageCard : LayeredForm
             Gfx.Arrow(g, true, x + half, row + 3 * s, aw, ah, 1.6f * s, t.Up);
             Gfx.Text(g, Fmt.Size(up), body, t.Text, t.CardBack, x + half + aw + 6 * s, row);
             return row + 28 * s;
+        }
+    }
+
+    // "TOP APPS TODAY": icon, name, amount, and a bar relative to the biggest app.
+    void TopApps(Graphics g, Theme t, List<AppUse> apps, float x, float right, float y)
+    {
+        using (var small = Gfx.MakeFont("Segoe UI Variable Small Semibol", 11 * s, "Segoe UI Semibold"))
+        using (var body = Gfx.MakeFont("Segoe UI Variable Text", 13 * s, "Segoe UI"))
+        using (var track = new SolidBrush(t.Divider))
+        using (var fill = new SolidBrush(t.Down))
+        using (var placeholder = new SolidBrush(t.Divider))
+        {
+            Gfx.Text(g, "TOP APPS TODAY", small, t.Secondary, t.CardBack, x, y);
+            ulong max = apps[0].Bytes;
+            float icon = 16 * s, textX = x + icon + 10 * s, row = y + 22 * s;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            foreach (var a in apps)
+            {
+                var iconRect = new RectangleF(x, row + 1 * s, icon, icon);
+                if (a.Icon != null) g.DrawImage(a.Icon, iconRect);
+                else using (var path = Gfx.RoundRect(iconRect, 3 * s)) g.FillPath(placeholder, path);
+
+                string size = Fmt.Size(a.Bytes);
+                float sizeW = Gfx.Width(g, size, body);
+                Gfx.Text(g, size, body, t.Secondary, t.CardBack, right - sizeW, row);
+                Gfx.TextFit(g, a.Name, body, t.Text, t.CardBack, textX, row, right - sizeW - 10 * s - textX);
+
+                float barY = row + 20 * s, barW = right - textX, barH = 3 * s;
+                using (var path = Gfx.RoundRect(new RectangleF(textX, barY, barW, barH), barH / 2)) g.FillPath(track, path);
+                float fw = Math.Max(barH, barW * (float)((double)a.Bytes / max));
+                using (var path = Gfx.RoundRect(new RectangleF(textX, barY, fw, barH), barH / 2)) g.FillPath(fill, path);
+                row += 30 * s;
+            }
         }
     }
 }
