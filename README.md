@@ -11,6 +11,7 @@ Hover over it to see how much data you used **today** and **this month**.
 - Sits next to the tray; if your app buttons fill that space, it shrinks (shorter "1.5K/s" numbers) instead of covering them.
 - Starts with Windows automatically after the first run (untick **Start with Windows** in the right-click menu to stop that).
 - Right-click the meter for **Settings…**, **Refresh usage**, **Start with Windows** and **Exit**.
+- ~50 KB, no install, no dependencies (.NET Framework 4.8, built into Windows).
 
 ## Settings
 
@@ -22,7 +23,6 @@ Right-click the meter → **Settings…**. Changes apply immediately and are sav
 | Appearance | Text size · arrows right or left of the numbers · upload / download colors · show speeds under 1 KB/s as 0 |
 | Hover card | Show the download / upload line or only totals · show top apps · number of apps (3 / 5 / 10) · delay before the card appears |
 | Data | 1 GB = 1024 MB (like Windows) or 1000 MB (like ISPs) · day the month starts (match your internet bill) |
-- ~20 KB, no install, no dependencies (.NET Framework 4.8, built into Windows).
 
 ## Install
 
