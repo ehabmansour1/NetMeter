@@ -753,7 +753,10 @@ class Meter : LayeredForm
         menu.Items.Add(autoStart);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, delegate { Close(); });
-        menu.Opening += delegate { autoStart.Checked = AutoStart.Enabled; };
+        // The meter never takes focus, so Windows wouldn't tell the menu about clicks elsewhere;
+        // bringing it to the foreground lets a click anywhere close the menu.
+        menu.Opening += delegate { autoStart.Checked = AutoStart.Enabled; SetForegroundWindow(Handle); };
+        menu.Opened += delegate { SetForegroundWindow(menu.Handle); };
         ContextMenuStrip = menu;
 
         Settings.Changed += OnSettingsChanged;
@@ -1035,4 +1038,5 @@ class Meter : LayeredForm
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
 }
