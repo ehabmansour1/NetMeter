@@ -44,6 +44,13 @@ static class Program
                 bmp.Save(args[1]);
             return;
         }
+        if (args.Length == 2 && args[0] == "--demo")
+        {
+            SetProcessDPIAware();
+            Application.EnableVisualStyles();
+            Demo.Run(args[1]);
+            return;
+        }
         if (args.Length >= 2 && args[0] == "--settings")
         {
             SetProcessDPIAware();
@@ -410,6 +417,11 @@ class Theme
                 light = k != null && Convert.ToInt32(k.GetValue("SystemUsesLightTheme", 0)) == 1;
         }
         catch { }
+        return For(light);
+    }
+
+    public static Theme For(bool light)
+    {
         var t = light
             ? new Theme { Light = true, Text = Color.FromArgb(26, 26, 26), Secondary = Color.FromArgb(96, 96, 96),
                           Up = Color.FromArgb(196, 89, 0), Down = Color.FromArgb(0, 103, 192),
@@ -860,11 +872,11 @@ class Meter : LayeredForm
     int ComputeFullWidth()
     {
         using (var g = Graphics.FromHwnd(IntPtr.Zero))
-        using (var font = MeterFont())
+        using (var font = MeterFont(scale))
             return (int)Math.Ceiling(Gfx.Width(g, Fmt.WidestSpeed, font) + 18 * scale);
     }
 
-    Font MeterFont()
+    internal static Font MeterFont(float scale)
     {
         return Gfx.MakeFont("Segoe UI Variable Text", Settings.TextPx * scale, "Segoe UI");
     }
@@ -1023,31 +1035,36 @@ class Meter : LayeredForm
         var t = Theme.Current();
         using (var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb))
         {
-            using (var g = Graphics.FromImage(bmp))
-            using (var font = MeterFont())
-            {
-                g.Clear(back);
-                // Longest number format that fits the current width: "1.5 KB/s", then "1.5K/s", then "1.5K".
-                string up = null, down = null;
-                for (int style = 0; style <= 2; style++)
-                {
-                    up = Fmt.Speed(upBps, style);
-                    down = Fmt.Speed(downBps, style);
-                    float need = 2 * scale + Math.Max(Gfx.Width(g, up, font), Gfx.Width(g, down, font)) + 5 * scale + 7 * scale + 2 * scale;
-                    if (need <= W) break;
-                }
-                float lineH = (Settings.TextPx + 5) * scale, top = (H - 2 * lineH) / 2f;
-                DrawLine(g, true, up, top, font, t);
-                DrawLine(g, false, down, top + lineH, font, t);
-            }
+            using (var g = Graphics.FromImage(bmp)) PaintMeter(g, scale, W, H, upBps, downBps, back, t);
             Gfx.MakeOpaque(bmp);
             Gfx.Present(Handle, bmp, Left, Top);
         }
     }
 
+    // The meter's two lines on a W x H surface (also used by --demo for the README images).
+    internal static void PaintMeter(Graphics g, float scale, int W, int H, double upBps, double downBps, Color back, Theme t)
+    {
+        using (var font = MeterFont(scale))
+        {
+            g.Clear(back);
+            // Longest number format that fits the current width: "1.5 KB/s", then "1.5K/s", then "1.5K".
+            string up = null, down = null;
+            for (int style = 0; style <= 2; style++)
+            {
+                up = Fmt.Speed(upBps, style);
+                down = Fmt.Speed(downBps, style);
+                float need = 2 * scale + Math.Max(Gfx.Width(g, up, font), Gfx.Width(g, down, font)) + 5 * scale + 7 * scale + 2 * scale;
+                if (need <= W) break;
+            }
+            float lineH = (Settings.TextPx + 5) * scale, top = (H - 2 * lineH) / 2f;
+            DrawLine(g, scale, W, back, true, up, top, font, t);
+            DrawLine(g, scale, W, back, false, down, top + lineH, font, t);
+        }
+    }
+
     // Numbers are right-aligned next to the tray. Arrows sit in a column at the right edge,
     // or (setting) just left of each number.
-    void DrawLine(Graphics g, bool up, string value, float y, Font font, Theme t)
+    static void DrawLine(Graphics g, float scale, int W, Color back, bool up, string value, float y, Font font, Theme t)
     {
         float aw = 7 * scale, ah = 9 * scale, gap = 5 * scale, right = W - 2 * scale;
         float valueW = Gfx.Width(g, value, font), arrowY = y + (Settings.TextPx - 9) * scale;
